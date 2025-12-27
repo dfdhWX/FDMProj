@@ -1,5 +1,4 @@
 import numpy as np
-import pyvisa as pv
 from generate_HCA_mesh import HCA_Mesh_Generator
 
 
