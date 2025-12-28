@@ -1,14 +1,19 @@
 import numpy as np
 
 class FDMSolver:
-    @staticmethod
-    def solve_equilibrium(nodes_xyz, connectivity, constraints, q_vector, P_ext=None):
-        """
-        支持复杂边界条件的求解器
-        :param constraints: 列表，格式为 [(node_idx, dof, value), ...]
-                            dof: 0为X, 1为Y, 2为Z
-                            例如: (5, 2, 0.0) 表示索引为5的节点Z方向固定为0
-        """
-        new_xyz, tensions = None, None
-        
-        return new_xyz, tensions
+    def __init__(self, ncoord, conn, bcs, elsets):
+        """力密度法求解"""
+        self.ncoord = ncoord
+        self.conn = conn
+        self.bcs = bcs
+        self.elsets = elsets
+        # 网格信息
+        self.num_elemt = self.conn.shape[0] # 单元总数
+    
+    def solve(self, q_v):
+        """计算自由位移\n
+        params:
+            - q_v: 力密度向量(每种类型)
+        returns:
+            - new_ncoord: 节点坐标"""
+        pass

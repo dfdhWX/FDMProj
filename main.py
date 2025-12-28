@@ -12,7 +12,7 @@ def main():
     
     #=================
     adapter = FDMAdapter(hca_model)
-    adapter.get_solver_inputs()
+    ncoord, conn, q_v, elsets, bcs = adapter.get_solver_inputs()
 
 
 if __name__ == "__main__":

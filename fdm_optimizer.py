@@ -6,7 +6,7 @@ class FDMOptimizer:
     def __init__(self, solver:FDMSolver):
         self.solver = solver
 
-    def run_lse(self, target_tensions, q_init):
+    def run_LSE(self, target_tensions, q_init):
         """
         最小二乘法寻优
         """
@@ -19,7 +19,7 @@ class FDMOptimizer:
         res = least_squares(objective_handle, q_init, bounds=(1e-5, np.inf))
         return res.x
 
-    def run_ga(self, target_tensions, q_bounds=(0.1, 100.0)):
+    def run_GA(self, target_tensions, q_bounds=(0.1, 100.0)):
         """
         遗传算法寻优 (PyGAD)
         """
@@ -34,7 +34,7 @@ class FDMOptimizer:
             num_parents_mating=5,
             fitness_func=fitness_handle, # 传入句柄
             sol_per_pop=20,
-            num_genes=self.solver.num_elements,
+            num_genes=self.solver.num_elemt,
             gene_space={'low': q_bounds[0], 'high': q_bounds[1]}
         )
         
@@ -42,7 +42,7 @@ class FDMOptimizer:
         best_q, _, _ = ga_instance.best_solution()
         return best_q
 
-    def run_dr(self, q_init):
+    def run_DR(self, q_init):
         """
         动力松弛法寻优 (独立逻辑)
         """

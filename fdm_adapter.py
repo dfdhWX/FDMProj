@@ -16,14 +16,25 @@ class FDMAdapter:
         self.idx_to_ceid = None
 
     def get_solver_inputs(self):
-        """将 HCA 业务数据转化为 Solver 矩阵"""
+        """将 HCA 业务数据转化为 Solver 矩阵\n
+        returns:
+            - ncoords: 节点坐标数组
+            - conn: 单元节点连接表
+            - q_v: 力密度向量
+            - elemIDs: 不同类型索单元ID
+            - bcs: 边界条件列表"""
         ## =========== 获取所有索单元===============
-        ceIDs, elset_names = self.__get_cable_eids()
+        elsets = self.__get_cable_eids()
+        ceIDs = []
+        # 展平索单元集
+        for elset in elsets:
+            ceIDs.extend(elset)
         # 生成单元ID 与数组索引映射表
         self.ceid_to_idx = {eid: i for i, eid in enumerate(ceIDs)}
         self.idx_to_ceid = {i: eid for i, eid in enumerate(ceIDs)}
         # 将单元ID转换为索引
         ceIdx = [self.model.eid_map[i] for i in ceIDs]
+        elemIDs = [[self.ceid_to_idx[i] for i in eset] for eset in elsets]
         # 生成单元节点连接数组
         conn = self.model.conn[ceIdx,:]
 
@@ -32,8 +43,7 @@ class FDMAdapter:
         ncoord = self.model.node[p_indices, :]
         
         # ===============力密度向量生成===================
-        q_v = np.full(len(elset_names), 1, dtype=float)
-        print(q_v)
+        q_v = np.full(len(elsets), 1, dtype=float)
         
         #================ 边界条件生成===================
         bcs = {"x":[], "y":[], "z":[]}
@@ -48,9 +58,8 @@ class FDMAdapter:
             nidx = self.nid_to_idx[nid]
             bcs["x"].extend([nidx])
             bcs["y"].extend([nidx])
-        print(bcs)
 
-        return None
+        return ncoord, conn, q_v, elemIDs, bcs
     
     
     def __get_cable_eids(self, cable_type = "all"):
@@ -58,23 +67,16 @@ class FDMAdapter:
         从嵌套的 elset 中提取所有索单元的 ID
         """
         cable_eids = []
-        elset_name = []
         # 遍历面索集合
         for sub_type in self.model.elset["surface_cable"]:
-            cable_eids.extend(self.model.elset["surface_cable"][sub_type])
-            elset_name.extend([("surface_cable",sub_type)])
-        
+            eIDs = self.model.elset["surface_cable"][sub_type]
+            cable_eids.extend(eIDs)
         # 遍历支撑索集合
         for sub_type in self.model.elset["support_cable"]:
-            cable_eids.extend(self.model.elset["support_cable"][sub_type])
-            elset_name.extend([("support_cable",sub_type)])
-            
-        eIDs = []
-        # 将数组展开为一维
-        for elset in cable_eids:
-            eIDs.extend(elset)
-            
-        return eIDs, elset_name
+            eIDs = self.model.elset["support_cable"][sub_type]
+            cable_eids.extend(eIDs)
+             
+        return cable_eids
 
     def update_hca_model(self, new_xyz, tensions):
         """将计算结果同步回 HCA 类"""
