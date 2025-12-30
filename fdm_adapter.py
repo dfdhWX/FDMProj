@@ -36,7 +36,14 @@ class FDMAdapter:
         ceIdx = [self.model.eid_map[i] for i in ceIDs]
         elemIDs = [[self.ceid_to_idx[i] for i in eset] for eset in elsets]
         # 生成单元节点连接数组
-        conn = self.model.conn[ceIdx,:]
+        connID = self.model.conn[ceIdx,:]
+        # 将节点ID替换为数组索引
+        connIdx = np.zeros_like(connID, dtype=int)
+        for i in range(connID.shape[0]):
+            nidx1 = self.nid_to_idx[connID[i, 0]]
+            nidx2 = self.nid_to_idx[connID[i, 1]]
+            # 记录节点索引
+            connIdx[i,:] = np.array([nidx1, nidx2]) 
 
         # ================获取坐标==================
         p_indices = self.model.nid_map[self.active_nids]
@@ -59,10 +66,19 @@ class FDMAdapter:
             bcs["x"].extend([nidx])
             bcs["y"].extend([nidx])
 
-        return ncoord, conn, q_v, elemIDs, bcs
+        return ncoord, connIdx, q_v, elemIDs, bcs
     
-    
-    def __get_cable_eids(self, cable_type = "all"):
+    def update_hca_model(self, new_xyz, tensions):
+        """将计算结果同步回 HCA 类"""
+        # 更新节点坐标
+        for i, xyz in enumerate(new_xyz):
+            nid = self.idx_to_nid[i]
+            p_idx = self.model.nid_map[nid]
+            self.model.node[p_idx] = xyz
+        
+            
+        
+    def __get_cable_eids(self):
         """
         从嵌套的 elset 中提取所有索单元的 ID
         """
@@ -77,16 +93,24 @@ class FDMAdapter:
             cable_eids.extend(eIDs)
              
         return cable_eids
-
-    def update_hca_model(self, new_xyz, tensions):
-        """将计算结果同步回 HCA 类"""
-        # 更新节点坐标
-        for i, xyz in enumerate(new_xyz):
-            nid = self.idx_to_nid[i]
-            p_idx = self.model.nid_map[nid]
-            self.model.node[p_idx] = xyz
-        
-        # 更新单元张力（可以存入一个字典方便导出）
-        self.model.element_tensions = {}
-        for i, eid in enumerate(self.current_active_eids):
-            self.model.element_tensions[eid] = tensions[i]
+    
+    
+    def get_surf_cable_eids(self,):
+        """
+        从嵌套的 elset 中提取面索单元的 ID
+        """
+        elsets = []
+        surf_eids = []
+        # 遍历面索集合
+        for sub_type in self.model.elset["surface_cable"]:
+            eIDs = self.model.elset["surface_cable"][sub_type]
+            elsets.extend(eIDs)
+            
+        # 展开
+        for elset in elsets:
+            ## 将单元ID转换为索引
+            for eID in elset:
+                eIdx = self.ceid_to_idx[eID]
+                surf_eids.extend([eIdx])
+            
+        return surf_eids
