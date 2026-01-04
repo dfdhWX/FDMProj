@@ -84,50 +84,31 @@ class FDMSolver:
         return new_ncoord, tensions
     
     
-    def compute_q(self, tension, ncoord=None):
+    def compute_q(self, current_tensions):
         """
-        计算每个单元集的初始力密度 q = T / L
-        
-        参数:
-        :param tension: 目标张力，可以是标量（所有组统一）或列表/数组（每组对应一个张力）
-        
-        返回:
-        :return q_groups: 长度等于 len(self.elsets) 的力密度数组
+        逻辑：q_new = T_current / L_ideal
+        以此强行将结构向目标坐标（ncoord）拉拢
         """
-        if ncoord is None:
-            ncoord = self.ncoord
-            
         q_groups = np.zeros(self.num_group)
-        
-        # 确保 tension 格式统一为数组
-        if isinstance(tension, (int, float)):
-            tension_values = [tension] * self.num_group
-        else:
-            tension_values = tension
 
+        # 1. 计算目标坐标（理想状态）下的全量单元长度
+        # 使用 self.ncoord（目标位置）计算
+        diffs_ideal = self.C @ self.ncoord 
+        lengths_ideal = np.linalg.norm(diffs_ideal, axis=1)
+
+        # 2. 按组统计新的力密度
         for i, element_indices in enumerate(self.elsets):
-            group_lengths = []
+            # 提取当前求解出来的张力
+            group_t = current_tensions[element_indices]
+            # 提取目标坐标下的理想长度
+            group_l_ideal = lengths_ideal[element_indices]
             
-            # 遍历该组内的每一个单元，计算其实际长度
-            for e_idx in element_indices:
-                node_i, node_j = self.conn[e_idx]
-                p1 = ncoord[node_i]
-                p2 = ncoord[node_j]
-                
-                # 计算欧式距离（单元长度 L）
-                length = np.linalg.norm(p1 - p2)
-                if length > 1e-9: # 防止除以零
-                    group_lengths.append(length)
+            # 计算理想力密度配比
+            # 如果长度极小，通常是支座或重合点，需避开
+            group_qs = group_t / (group_l_ideal + 1e-9)
             
-            if not group_lengths:
-                q_groups[i] = 1.0 # 如果组内无有效单元，给个默认值
-                continue
-                
-            # 计算该组单元的平均长度
-            avg_length = np.mean(group_lengths)
-            
-            # 根据 q = T / L 计算该组的力密度
-            q_groups[i] = tension_values[i] / avg_length
+            # 取均值作为该组下一轮的输入 q
+            q_groups[i] = np.mean(group_qs)
             
         return q_groups
     
