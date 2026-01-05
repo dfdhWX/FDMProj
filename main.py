@@ -44,6 +44,7 @@ class Logger(object):
 sys.stdout = Logger()
 
 def main():
+    ## 并行化
     # 1. ------------------ 硬件与种群自动适配 ------------------
     cpu_count = os.cpu_count() or 1
     N_JOBS = max(1, cpu_count - 1) if cpu_count > 4 else cpu_count
