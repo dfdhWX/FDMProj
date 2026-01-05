@@ -2,7 +2,7 @@ import numpy as np
 from generate_HCA_mesh import HCA_Mesh_Generator
 from fdm_adapter import FDMAdapter
 from fdm_solver import FDMSolver
-from fdm_optimizer_v6 import FDMOptimizer
+from fdm_optimizer_v7 import FDMOptimizer
 from abaqus_expoter import AbaqusExporter
 import sys
 import datetime
@@ -56,11 +56,12 @@ sys.stdout = Logger("fdm_run")
 
 def main():
     # =================创建HCA网格生成器实例=================
-    hca_model = HCA_Mesh_Generator(n_r=4, n_theta=24)
+    hca_model = HCA_Mesh_Generator(n_r=4, n_theta=36)
     # 生成HCA网格
     hca_model.generate_mesh()
     # 绘制网格图
     # hca_model.mesh_plot(show_labels=False)
+
 
     # =================
     adapter = FDMAdapter(hca_model)
@@ -80,14 +81,27 @@ def main():
         only_surface=only_surf, 
         surf_elset=surf_eids
     )
+    
+    # =============== 加载种子 ==================
+    # q_seed = optimizer.load_seeds('seed_RMSE_1.46_TR_12.38.npy')
 
     # ---------- GA2：全局多目标搜索 ----------
     # 目标：在大范围内找到 RMSE 和 Tension Ratio 的 Pareto 前沿
     q_base, all_q, all_F = optimizer.run_GA2(
+        # q_seeds= q_seed,
         q_bounds=(0.1, 150.0), # 这里的范围根据你的工程经验设置
         u_limit=100.0,
         t_limits=(10.0, 500.0),
         n_gen=250,
+        pop_size=200,
+    )
+    
+    q_base, all_q, all_F = optimizer.run_GA2(
+        q_seeds=all_q,
+        q_bounds=(0.1, 150.0), # 这里的范围根据你的工程经验设置
+        u_limit=100.0,
+        t_limits=(10.0, 500.0),
+        n_gen=200,
         pop_size=200,
     )
 
@@ -100,8 +114,9 @@ def main():
     q_mid = optimizer.run_GA1(
         q_init=q_base,
         q_ratio_bounds=(0.85, 1.15),
-        weights=(0.9, 0.1),       # 90% 权重在精度
-        rms_bounds=(0.0, 50.0),   # 此时 RMSE 较大，归一化区间设宽
+        RMSE_weight=0.8,
+        RMSE_max= 1.0,
+        RMSE_tol = 0.8,
         u_limit=70.0,
         n_gen=200
     )
@@ -110,46 +125,16 @@ def main():
     # 策略：进入 1mm 以内后，开始兼顾张力比
     best_q = optimizer.run_GA1(
         q_init=q_mid,
-        q_ratio_bounds=(0.95, 1.05),
-        weights=(0.7, 0.3),       # 70% 权重在精度
-        rms_bounds=(0.0, 1.0),    # 归一化区间锁定在 1mm 内
-        u_limit=50.0,
-        n_gen=300
-    )
-
-    # ---------- 第三轮：精度固化与张力反攻 (RMSE < 0.05mm) ----------
-    # 策略：此时精度已经非常高，开始将权重向张力比倾斜
-    best_q = optimizer.run_GA1(
-        q_init=best_q,
-        q_ratio_bounds=(0.99, 1.01),
-        weights=(0.4, 0.6),       # 60% 权重在张力比
-        rms_bounds=(0.0, 0.2),    # 在 0.2mm 范围内寻找更优张力
-        u_limit=10.0,
-        n_gen=300
-    )
-
-    # ---------- 第四轮：极致张力平衡 ----------
-    # 策略：锁定极小范围，专门利用你的 1-1/ratio 公式优化均匀度
-    best_q = optimizer.run_GA1(
-        q_init=best_q,
-        q_ratio_bounds=(0.995, 1.005),
-        weights=(0.1, 0.9),       # 80% 权重在张力比
-        rms_bounds=(0.0, 0.1),    # 只要 RMSE 在 0.1mm 内，哪怕波动也没关系
-        u_limit=5.0,
-        n_gen=400,
-        pop_size=200              # 增加种群，细化搜索
-    )
-
-    # ---------- 第五轮：终极锁定 ----------
-    # 策略：万分之一级别的微调，做最后的数值收敛
-    best_q = optimizer.run_GA1(
-        q_init=best_q,
-        q_ratio_bounds=(0.999, 1.001),
-        weights=(0.5, 0.5),       # 最后时刻回归平衡，确保不偏离
-        rms_bounds=(0.0, 0.01),   # 极小归一化区间
-        u_limit=2.0,
+        q_ratio_bounds=(0.85, 1.15),
+        RMSE_weight=0.3,
+        RMSE_max= 1.0,
+        RMSE_tol = 0.8,
+        u_limit=70.0,
         n_gen=200
     )
+    
+    #====== 保存优秀的种子 ============
+    optimizer.save_seeds(best_q)
 
     # 4. 最终校验
     final_coords, final_tensions = solver.solve(best_q)

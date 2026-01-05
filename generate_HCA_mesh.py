@@ -3,7 +3,7 @@ import pyvista as pv
 
 
 class HCA_Mesh_Generator:
-    def __init__(self, D=16.0, F=10.0, H=10.0, h=5.0, n_r=4, n_theta=6):
+    def __init__(self, D=10.0, F=6.0, H=3.0, h=1.0, n_r=4, n_theta=36):
         self.D, self.F, self.H, self.h = D, F, H, h
         self.n_r, self.n_theta = n_r, n_theta
 
