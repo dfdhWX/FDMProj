@@ -1,4 +1,5 @@
 import numpy as np
+import os
 
 class AbaqusExporter:
     def __init__(self, solver):
@@ -7,20 +8,25 @@ class AbaqusExporter:
         """
         self.solver = solver
 
-    def write_inp(self, filename, final_coords, final_tensions, area=1.0):
+    def write_inp(self, filename, final_coords=None, final_tensions=None, area=1.0):
         """
-        使用 NSET 方式导出 INP 文件
+        导出 INP 文件。
+        如果没有提供 final_coords，则使用 solver.ncoord (初始坐标)。
+        如果没有提供 final_tensions，则仅导出网格，不包含初始应力和分析步。
         """
-        print(f"--- 正在生成 Abaqus 校验文件: {filename} ---")
+        # 确定使用的坐标：优先使用传入的坐标，若无则使用 solver 内部的
+        coords = final_coords if final_coords is not None else self.solver.ncoord
+        
+        print(f"--- 正在生成 Abaqus 文件: {filename} ---")
         
         with open(filename, 'w') as f:
             # 1. 标题
             f.write("*HEADING\n")
-            f.write("**FDM Equilibrium Check\n")
+            f.write(f"**FDM Mesh Export - {'Full Analysis' if final_tensions is not None else 'Mesh Only'}\n")
 
             # 2. 节点定义
             f.write("*NODE\n")
-            for i, (x, y, z) in enumerate(final_coords):
+            for i, (x, y, z) in enumerate(coords):
                 f.write(f"{i + 1}, {x}, {y}, {z}\n")
 
             # 3. 单元定义
@@ -28,13 +34,13 @@ class AbaqusExporter:
             for i, (n1, n2) in enumerate(self.solver.conn):
                 f.write(f"{i + 1}, {int(n1) + 1}, {int(n2) + 1}\n")
 
-            # 4. 定义节点集合 (NSET) 用于边界条件
+            # 4. 集合定义 (NSET) 用于边界条件
+            fix_nodes, hoop_nodes = [], []
             if isinstance(self.solver.bcs, dict):
                 set_x = set(self.solver.bcs.get("x", []))
                 set_y = set(self.solver.bcs.get("y", []))
                 set_z = set(self.solver.bcs.get("z", []))
 
-                # --- 全约束集合 NFIX ---
                 fix_nodes = sorted(list(set_x & set_y & set_z))
                 if fix_nodes:
                     f.write("*NSET, NSET=NFIX\n")
@@ -42,7 +48,6 @@ class AbaqusExporter:
                         chunk = [str(int(n) + 1) for n in fix_nodes[i:i+10]]
                         f.write(", ".join(chunk) + "\n")
 
-                # --- 平面约束集合 NHOOP ---
                 hoop_nodes = sorted(list((set_x & set_y) - set_z))
                 if hoop_nodes:
                     f.write("*NSET, NSET=NHOOP\n")
@@ -50,7 +55,7 @@ class AbaqusExporter:
                         chunk = [str(int(n) + 1) for n in hoop_nodes[i:i+10]]
                         f.write(", ".join(chunk) + "\n")
 
-            # 5. 定义单元集合 (ELSET) 用于结果查看
+            # 5. 单元集合 (ELSET)
             if hasattr(self.solver, 'elsets'):
                 for g_idx, e_indices in enumerate(self.solver.elsets):
                     f.write(f"*ELSET, ELSET=GROUP_{g_idx}\n")
@@ -63,23 +68,25 @@ class AbaqusExporter:
             f.write(f"{area},\n")
             f.write("*MATERIAL, NAME=STEEL_MAT\n*ELASTIC\n2.1E11, 0.3\n")
 
-            # 7. 施加边界条件 (通过 NSET)
+            # 7. 施加边界条件
             f.write("*BOUNDARY\n")
-            if "fix_nodes" in locals() and fix_nodes:
-                # 约束 NFIX 集合的 1, 2, 3 自由度
+            if fix_nodes:
                 f.write("NFIX, 1, 3, 0.0\n")
-            if "hoop_nodes" in locals() and hoop_nodes:
-                # 约束 NHOOP 集合的 1, 2 自由度 (Z方向自由)
+            if hoop_nodes:
                 f.write("NHOOP, 1, 2, 0.0\n")
 
-            # 8. 初始应力
-            f.write("*INITIAL CONDITIONS, TYPE=STRESS\n")
-            for i, t in enumerate(final_tensions):
-                f.write(f"{i + 1}, {t / area}\n")
+            # --- 关键逻辑分支：只有存在张力数据时才导出计算步 ---
+            if final_tensions is not None:
+                # 8. 初始应力
+                f.write("*INITIAL CONDITIONS, TYPE=STRESS\n")
+                for i, t in enumerate(final_tensions):
+                    f.write(f"{i + 1}, {t / area}\n")
 
-            # 9. 分析步
-            f.write("*STEP, NAME=VERIFY, NLGEOM=YES\n*STATIC\n")
-            f.write("1.0, 1.0, 1e-05, 1.0\n")
-            f.write("*NODE PRINT, FREQUENCY=1\nU, RF\n*END STEP\n")
+                # 9. 分析步
+                f.write("*STEP, NAME=VERIFY, NLGEOM=YES\n*STATIC\n")
+                f.write("1.0, 1.0, 1e-05, 1.0\n")
+                f.write("*NODE PRINT, FREQUENCY=1\nU, RF\n*END STEP\n")
+            else:
+                print(f"[Info] 未提供张力数据，仅导出网格及集合定义。")
 
-        print(f"成功导出: {filename}")
+        print(f"✨ 成功导出: {filename}")

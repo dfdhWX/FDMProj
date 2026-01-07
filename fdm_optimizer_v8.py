@@ -222,3 +222,13 @@ class FDMOptimizer:
         np.save(filename, q)
         print(f"[IO] 种子已保存: {filename}")
         return filename
+    
+    def load_seeds(self, filename="fdm_seeds.npy"):
+        """从本地文件加载种子解"""
+        if os.path.exists(filename):
+            q_seeds = np.load(filename)
+            print(f"[IO] 成功从 {filename} 加载种子解，形状为: {q_seeds.shape}")
+            return q_seeds
+        else:
+            print(f"[Warning] 文件 {filename} 不存在，将返回 None")
+            return None

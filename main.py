@@ -59,16 +59,24 @@ def main():
     # --- 硬件与并行参数适配 ---
     cpu_count = os.cpu_count() or 1
     N_JOBS = max(1, cpu_count - 1) 
-    POP_SIZE_GA2 = max(N_JOBS * 16, 128) # 确保种群足够覆盖搜索空间
-    MAX_LOOPS = 1                        # GA2 滚动演化轮次
-    TARGET_RMSE = 1.0                    # 必须死守的门槛 (mm)
-    TARGET_TR = 25.0                     # 理想张力比目标
+    POP_SIZE_GA2 = max(N_JOBS * 20, 128) # 确保种群足够覆盖搜索空间
+    MAX_LOOPS = 10                        # GA2 滚动演化轮次
+    TARGET_RMSE = 2.0                    # 必须死守的门槛 (mm)
+    TARGET_TR = 20.0                    # 理想张力比目标
 
     print(f"[System] 并行配置: 使用 {N_JOBS} 核计算, 初始种群规模 {POP_SIZE_GA2}")
 
     # --- 模型与求解器初始化 ---
-    hca_model = HCA_Mesh_Generator(n_r=4, n_theta=36)
+    # 结构参数
+    D, F = 10.0, 6.0
+    H = 6.206
+    h = 0.5*H-D**2/(16.0*F)
+    # 网格生成
+    hca_model = HCA_Mesh_Generator(n_r=4, n_theta=36, D=D, F=F, H = H, h = h)
     hca_model.generate_mesh()
+    hca_model.mesh_plot(show_labels=False)
+    
+    # ============== FDM =================
     adapter = FDMAdapter(hca_model)
     ncoord, conn, q_v, elsets, bcs = adapter.get_solver_inputs()
     surf_eids = adapter.get_surf_cable_eids()
@@ -80,6 +88,10 @@ def main():
     print("\n[Step 0] 正在通过迭代法生成初始可行种子...")
     # 这一步是为了拿到你说的 RMSE<1, TR=78 的解
     q_iter = optimizer.run_iteration(max_iter=2000, rms_limit=TARGET_RMSE)
+    
+    # 
+    # seed_path = 'GA1V8_RMSE_1.00_TR_14.46.npy'
+    # q_iter = optimizer.load_seeds(seed_path)
     
     # 物理评估初始状态
     c0, t0 = solver.solve(q_iter)
@@ -132,11 +144,11 @@ def main():
                 print(f"📉 正在收敛 RMSE: {rmse_loop:.4f}")
 
         # 提前终止：如果 TR 已经非常理想
-        if current_best_rmse < 0.9 and current_best_tr < TARGET_TR:
-            optimizer.save_seeds(global_best_q, "G2V8")
+        if current_best_rmse < TARGET_RMSE and current_best_tr < TARGET_TR:
             print("✅ 已达到预设目标，提前结束演化。")
             break
-
+    
+    optimizer.save_seeds(global_best_q, "GA2V8")
     # ================= STEP 2: GA1 终极微调 (单目标压榨) =================
     print("\n[Step 2] 启动 GA1 单目标窄域精修...")
     # 只在当前最佳解的 ±8% 范围内变动 q

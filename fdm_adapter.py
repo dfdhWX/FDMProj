@@ -68,14 +68,41 @@ class FDMAdapter:
 
         return ncoord, connIdx, q_v, elemIDs, bcs
     
-    def update_hca_model(self, new_xyz, tensions):
-        """将计算结果同步回 HCA 类"""
-        # 更新节点坐标
+    def update_hca_model(self, new_xyz, tensions, force_densities=None):
+        """
+        将计算结果同步回 HCA 类
+        :param new_xyz: Solver 返回的节点坐标 (N_active, 3)
+        :param tensions: Solver 返回的索单元张力向量 (E_cables,)
+        :param force_densities: 可选，Solver 返回的力密度向量 (E_cables,)
+        """
+        # 1. 更新节点坐标
+        new_coord = self.model.node.copy()
         for i, xyz in enumerate(new_xyz):
             nid = self.idx_to_nid[i]
             p_idx = self.model.nid_map[nid]
-            self.model.node[p_idx] = xyz
+            new_coord[p_idx] = xyz
         
+        # 2. 更新单元张力 (核心逻辑：类似于 conn 的逆向映射)
+        # 假设 self.model.element_data 是存储全量单元张力的字典或数组
+        full_tensions = np.zeros(len(self.model.eid_map)) # 这里的长度应对应 HCA 全量单元
+        
+        # 遍历 Solver 中的每一个索单元索引
+        for i, t in enumerate(tensions):
+            eid = self.idx_to_ceid[i]      # 获取原始单元 ID
+            e_idx_hca = self.model.eid_map[eid] # 获取在 HCA 模型全量数组中的索引
+            full_tensions[e_idx_hca] = t
+
+        # 3. 同步力密度 (如果有)
+        full_qs = None
+        if force_densities is not None:
+            full_qs = np.zeros(len(self.model.eid_map))
+            for i, q in enumerate(force_densities):
+                eid = self.idx_to_ceid[i]
+                e_idx_hca = self.model.eid_map[eid]
+                full_qs[e_idx_hca] = q
+
+        # 返回更新后的全量数据，或者直接赋值给 self.model
+        return new_coord, full_tensions, full_qs
             
         
     def __get_cable_eids(self):

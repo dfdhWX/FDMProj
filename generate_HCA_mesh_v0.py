@@ -1,11 +1,10 @@
 import numpy as np
 import pyvista as pv
-import matplotlib.cm as cm
+
 
 class HCA_Mesh_Generator:
-    def __init__(self, D=10.0, F=6.0, H=6.206, h=2.0613333333333337,h_f=6.5, n_r=4, n_theta=36):
+    def __init__(self, D=16.0, F=10.0, H=10.0, h=5.0, n_r=4, n_theta=6):
         self.D, self.F, self.H, self.h = D, F, H, h
-        self.hf = h_f
         self.n_r, self.n_theta = n_r, n_theta
 
         # 单元集合容器
@@ -154,24 +153,16 @@ class HCA_Mesh_Generator:
         self.conn = np.vstack((self.conn, hconn))
         self.eid_map[3 * self.n_r + 1] = 3 * self.n_r
         self.elset["beam"]["hoop"].append(3 * self.n_r + 1)
-        
         # =========== Column 单元==============
-        clconn = np.array([
-            [1, 2 * self.n_r + 1], 
-            [1, 2 * self.n_r + 2],
-            [2 * self.n_r + 2, 2 * self.n_r + 4]
-            ])
-        clcoord = np.array([0.0, 0.0, self.hf])
+        clconn = np.array([[1, 2 * self.n_r + 1], [1, 2 * self.n_r + 2]])
         # 添加到全局
         self.conn = np.vstack((self.conn, clconn))
-        self.node = np.vstack((self.node, clcoord))
-        self.nid_map[2 * self.n_r + 4] = 2 * self.n_r + 3
         # 更新单元ID映射表
-        self.eid_map[3 * self.n_r + 2 : 3 * self.n_r + 5] = np.array(
-            [3 * self.n_r + 1, 3 * self.n_r + 2,  3 * self.n_r + 3]
+        self.eid_map[3 * self.n_r + 2 : 3 * self.n_r + 4] = np.array(
+            [3 * self.n_r + 1, 3 * self.n_r + 2]
         )
         # 分类
-        self.elset["beam"]["column"].extend([3 * self.n_r + 2, 3 * self.n_r + 3, 3 * self.n_r + 4])
+        self.elset["beam"]["column"].extend([3 * self.n_r + 2, 3 * self.n_r + 3])
         ##============= 单元、节点平移=================
         self.__node_offset = self.nid_map.max()
         self.__elem_offset = self.eid_map.max()
@@ -383,180 +374,81 @@ class HCA_Mesh_Generator:
     def __compute_z(self, x, y):
         return self.h + (x**2 + y**2) / (4 * self.F)
 
-    def mesh_plot(self, show_labels=False, label_ratio=1.0):
+    def mesh_plot(self, show_labels=True, label_ratio=1.0):
         """
-        基于 self.elset 的分类着色绘图函数
-        梁单元为灰色，索单元按子列表分组着色
+        优化后的绘图函数
+        :param show_labels: 是否显示 ID 标签
+        :param label_ratio: 标签显示比例 (0.0~1.0)，防止模型过大时文字重叠
         """
-        if not hasattr(self, 'elset') or not self.elset:
-            print("❌ [Error] 未找到 self.elset 集合，请确保数据已加载。")
-            return
+        # --- 1. 提取物理拓扑 (处理 nid_map 映射) ---
+        # 确保只绘制有效单元 (eid_map 中有记录的)
+        active_eids = np.where(self.eid_map != -1)[0]
+        active_conn_ids = self.conn[self.eid_map[active_eids]]
 
-        plotter = pv.Plotter(title="HCA Classified Mesh Viewer")
-        
-        # --- 1. 颜色配置 ---
-        # 梁单元固定颜色
-        BEAM_COLOR = '#808080'  # 灰色
-        # 索单元配色表 (用于没有子列表的情况)
-        CABLE_COLORS = {
-            'radial': '#e74c3c',  # 红色系
-            'hoop': '#3498db',    # 蓝色系
-            'tie': '#f1c40f',     # 黄色系
-            'upper': '#2ecc71',   # 绿色系
-            'lower': '#9b59b6'    # 紫色系
-        }
+        # 将 NID 映射为 node 数组的行索引
+        # 注意：此处 nid_map 可能很大，直接索引比循环快几个数量级
+        plot_indices = self.nid_map[active_conn_ids]
 
-        # --- 2. 内部绘制逻辑 ---
-        def draw_group(eids, color, label):
-            """将一组 EID 绘制到 plotter 上"""
-            # 确保 eids 是扁平列表且有效
-            if isinstance(eids, np.ndarray):
-                eids = eids.tolist()
-            
-            # 过滤出有效的单元索引
-            valid_eids = [e for e in eids if e < len(self.eid_map) and self.eid_map[e] != -1]
-            if not valid_eids:
-                return
+        # --- 2. 构建 PyVista 网格 ---
+        nelem = len(plot_indices)
+        # 批量构建 [2, i, j] 结构
+        cells = np.empty((nelem, 3), dtype=np.int32)
+        cells[:, 0] = 2
+        cells[:, 1:] = plot_indices
 
-            # 获取物理拓扑映射
-            active_conn = self.conn[self.eid_map[valid_eids]]
-            plot_indices = self.nid_map[active_conn]
+        mesh = pv.UnstructuredGrid(
+            cells.flatten(), np.full(nelem, pv.CellType.LINE), self.node
+        )
 
-            # 构建 PyVista 网格
-            nelem = len(plot_indices)
-            cells = np.empty((nelem, 3), dtype=np.int32)
-            cells[:, 0] = 2
-            cells[:, 1:] = plot_indices
+        plotter = pv.Plotter(title="HCA Mesh Viewer")
+        plotter.add_mesh(mesh, color="blue", line_width=2, label="Cables")
 
-            grid = pv.UnstructuredGrid(
-                cells.flatten(), 
-                np.full(nelem, pv.CellType.LINE), 
-                self.node
-            )
-            
-            # 梁单元加粗
-            width = 3 if "beam" in (label or "").lower() else 2
-            plotter.add_mesh(grid, color=color, line_width=width, label=label)
-
-        # --- 3. 遍历 self.elset 渲染 ---
-        
-        # A. 绘制梁单元 (从 self.elset['beam'] 获取)
-        if 'beam' in self.elset:
-            for b_type, eids in self.elset['beam'].items():
-                draw_group(eids, BEAM_COLOR, f"Beam_{b_type}")
-
-        # B. 绘制各类索单元
-        cable_categories = ['surface_cable', 'support_cable']
-        for cat in cable_categories:
-            if cat not in self.elset: continue
-            
-            for sub_type, contents in self.elset[cat].items():
-                # 判断是否为嵌套列表 (如 radial: [[...], [...]])
-                if len(contents) > 0 and isinstance(contents[0], (list, np.ndarray)):
-                    # 每个子列表分配一个独特的渐变色
-                    n_groups = len(contents)
-                    colormap = cm.get_cmap('turbo', n_groups)
-                    
-                    for i, subgroup in enumerate(contents):
-                        color = colormap(i)[:3] # 获取 RGB
-                        # 仅为第一组添加图例标签，防止图例过长
-                        tag = f"{sub_type}_grp_{i}" if i == 0 else None
-                        draw_group(subgroup, color, tag)
-                else:
-                    # 普通列表
-                    color = CABLE_COLORS.get(sub_type, '#ffffff')
-                    draw_group(contents, color, sub_type)
-
-        # --- 4. 辅助视觉元素 ---
         if show_labels:
-            # 此处复用你之前的节点/单元 ID 标注逻辑 (略)
-            pass
+            # --- 3. 节点标签优化 (红色) ---
+            active_nids = np.where(self.nid_map != -1)[0]
+            # 抽样逻辑
+            if label_ratio < 1.0:
+                mask = np.random.rand(len(active_nids)) < label_ratio
+                active_nids = active_nids[mask]
 
-        # 设置图例
-        plotter.add_legend(size=(0.15, 0.15), bcolor=None)
-        
-        # 视角优化
+            node_coords = self.node[self.nid_map[active_nids]]
+            node_labels = [f"N{n}" for n in active_nids]
+            plotter.add_point_labels(
+                node_coords,
+                node_labels,
+                font_size=12,
+                text_color="red",
+                name="nodes",
+                always_visible=False,
+            )
+
+            # --- 4. 单元标签优化 (绿色) ---
+            # 直接通过 active_conn_ids 计算中心点，避免二次查询
+            p1 = self.node[self.nid_map[active_conn_ids[:, 0]]]
+            p2 = self.node[self.nid_map[active_conn_ids[:, 1]]]
+            centers = (p1 + p2) / 2.0
+
+            # 抽样
+            if label_ratio < 1.0:
+                mask = np.random.rand(len(active_eids)) < label_ratio
+                centers = centers[mask]
+                active_eids = active_eids[mask]
+
+            elem_labels = [f"E{e}" for e in active_eids]
+            plotter.add_point_labels(
+                centers,
+                elem_labels,
+                font_size=10,
+                text_color="green",
+                name="elems",
+                shadow=True,
+            )
+
+        plotter.add_legend(
+            labels=[("Node ID", "red"), ("Elem ID", "green")], bcolor=None
+        )
         plotter.view_isometric()
-        plotter.enable_anti_aliasing()
-        print("✨ [Viz] 分类模型渲染完成。")
         plotter.show()
-        
-        
-    # def mesh_plot(self, show_labels=True, label_ratio=1.0):
-    #     """
-    #     优化后的绘图函数
-    #     :param show_labels: 是否显示 ID 标签
-    #     :param label_ratio: 标签显示比例 (0.0~1.0)，防止模型过大时文字重叠
-    #     """
-    #     # --- 1. 提取物理拓扑 (处理 nid_map 映射) ---
-    #     # 确保只绘制有效单元 (eid_map 中有记录的)
-    #     active_eids = np.where(self.eid_map != -1)[0]
-    #     active_conn_ids = self.conn[self.eid_map[active_eids]]
-
-    #     # 将 NID 映射为 node 数组的行索引
-    #     # 注意：此处 nid_map 可能很大，直接索引比循环快几个数量级
-    #     plot_indices = self.nid_map[active_conn_ids]
-
-    #     # --- 2. 构建 PyVista 网格 ---
-    #     nelem = len(plot_indices)
-    #     # 批量构建 [2, i, j] 结构
-    #     cells = np.empty((nelem, 3), dtype=np.int32)
-    #     cells[:, 0] = 2
-    #     cells[:, 1:] = plot_indices
-
-    #     mesh = pv.UnstructuredGrid(
-    #         cells.flatten(), np.full(nelem, pv.CellType.LINE), self.node
-    #     )
-
-    #     plotter = pv.Plotter(title="HCA Mesh Viewer")
-    #     plotter.add_mesh(mesh, color="blue", line_width=2, label="Cables")
-
-    #     if show_labels:
-    #         # --- 3. 节点标签优化 (红色) ---
-    #         active_nids = np.where(self.nid_map != -1)[0]
-    #         # 抽样逻辑
-    #         if label_ratio < 1.0:
-    #             mask = np.random.rand(len(active_nids)) < label_ratio
-    #             active_nids = active_nids[mask]
-
-    #         node_coords = self.node[self.nid_map[active_nids]]
-    #         node_labels = [f"N{n}" for n in active_nids]
-    #         plotter.add_point_labels(
-    #             node_coords,
-    #             node_labels,
-    #             font_size=12,
-    #             text_color="red",
-    #             name="nodes",
-    #             always_visible=False,
-    #         )
-
-    #         # --- 4. 单元标签优化 (绿色) ---
-    #         # 直接通过 active_conn_ids 计算中心点，避免二次查询
-    #         p1 = self.node[self.nid_map[active_conn_ids[:, 0]]]
-    #         p2 = self.node[self.nid_map[active_conn_ids[:, 1]]]
-    #         centers = (p1 + p2) / 2.0
-
-    #         # 抽样
-    #         if label_ratio < 1.0:
-    #             mask = np.random.rand(len(active_eids)) < label_ratio
-    #             centers = centers[mask]
-    #             active_eids = active_eids[mask]
-
-    #         elem_labels = [f"E{e}" for e in active_eids]
-    #         plotter.add_point_labels(
-    #             centers,
-    #             elem_labels,
-    #             font_size=10,
-    #             text_color="green",
-    #             name="elems",
-    #             shadow=True,
-    #         )
-
-    #     plotter.add_legend(
-    #         labels=[("Node ID", "red"), ("Elem ID", "green")], bcolor=None
-    #     )
-    #     plotter.view_isometric()
-    #     plotter.show()
 
     def export_to_inp(self, filename="HCA_Model.inp"):
         """
@@ -719,10 +611,8 @@ if __name__ == "__main__":
     h = 0.5*H-D**2/(16.0*F)
     hf = 6.5
     # 网格生成
-    generator = HCA_Mesh_Generator(n_r=4, n_theta=36, D=D, F=F, H = H, h = h, h_f=hf)
+    generator = HCA_Mesh_Generator(n_r=4, n_theta=36, D=D, F=F, H = H, h = h)
     
     generator.generate_mesh()
-    elsets = generator.elset
-    # print(elsets)
     generator.mesh_plot(show_labels=False)
-    generator.export_to_inp1(r"D:\hm-file\inp_file\HCA_v1.inp")
+    # generator.export_to_inp1(r"D:\hm-file\inp_file\HCA.inp")

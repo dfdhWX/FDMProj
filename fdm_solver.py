@@ -92,3 +92,55 @@ class FDMSolver:
             q_groups[i] = np.mean(group_qs)
             
         return q_groups
+    
+    
+    def get_RMSE_TR(self, q_v, target_elset=None):
+        """
+        评估当前力密度下的几何精度和张力均匀度
+        :param q_v: 当前力密度向量 (组或全量)
+        :param target_elset: 指定计算 TR 的单元索引集（例如仅计算面索），若为 None 则计算全量单元
+        :return: rmse (mm), tr (无量纲)
+        """
+        # 1. 执行 FDM 求解
+        new_coords, tensions = self.solve(q_v=q_v)
+        
+        # 2. 计算几何误差 RMSE (单位: mm)
+        # 计算每个节点的位移差
+        diff_coords = new_coords - self.ncoord
+        # 计算欧式距离的平方和，再求均值开根号
+        # np.linalg.norm(..., axis=1) 计算每个点的位移长度
+        node_dists = np.linalg.norm(diff_coords, axis=1)
+        rmse = np.sqrt(np.mean(node_dists**2)) * 1000.0
+        
+        # 3. 计算张力比 TR
+        # 如果指定了特定单元集（如面索层），则只计算该集合内的 TR
+        if target_elset is not None:
+            relevant_tensions = tensions[target_elset]
+        else:
+            relevant_tensions = tensions
+
+        t_min = np.min(relevant_tensions)
+        t_max = np.max(relevant_tensions)
+        
+        # 防止除以 0 (索松弛情况)
+        tr = t_max / (t_min + 1e-8)
+        
+        return rmse, tr
+    
+    def get_q_avg(self, q_v, elsets=None):
+        # 1. 构造全量 q 
+        q = np.zeros(self.num_elemt)
+        if len(q_v) == self.num_group:
+            for i, idxs in enumerate(self.elsets):
+                q[idxs] = q_v[i]
+        else:
+            q = q_v
+        
+        if elsets is None:
+            q_surf = q
+        else:
+            q_surf = q[elsets]
+            
+        # 计算均值
+        q_avg = np.mean(q_surf)
+        return q_avg
